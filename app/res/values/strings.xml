@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_desc">用于自动开启系统「无线调试」开关（ADB 网关）</string>
+</resources>

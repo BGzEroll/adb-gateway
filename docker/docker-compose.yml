@@ -1,0 +1,17 @@
+services:
+  adbgw:
+    build: .
+    image: adbgw/server:latest
+    container_name: adbgw
+    restart: unless-stopped
+    environment:
+      POLL: "20"
+      FIXED: "5555"
+      STATUS_PORT: "8770"
+    volumes:
+      - adbkeys:/root/.android
+    ports:
+      - "8770:8770"
+
+volumes:
+  adbkeys:

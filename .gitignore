@@ -1,0 +1,14 @@
+# 构建产物
+app/adbgw.apk
+app/*.apk
+app/build/
+# 临时文件
+*.log
+*.tmp
+__pycache__/
+*.pyc
+# 编辑器
+.idea/
+.vscode/
+# 签名产物
+*.idsig
