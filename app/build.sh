@@ -4,7 +4,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 APP_DIR="$(pwd)"
-WORK="${WORK:-$HOME/apkbuild/gw-build}"
 
 if [ -x "$HOME/jdk17/bin/java" ]; then
   export JAVA_HOME="$HOME/jdk17"
@@ -13,7 +12,7 @@ fi
 
 TOOLS="${TOOLS:-$HOME/apkbuild/tools}"
 BTDIR="$(find "$TOOLS" -maxdepth 5 -type f -name aapt2 2>/dev/null | head -1 | xargs -r dirname || true)"
-ANDROID_JAR="$(find "$TOOLS" -maxdepth 5 -type f -name android.jar 2>/dev/null | head -1 || true)"
+ANDROID_JAR="${ANDROID_JAR:-$(find "$TOOLS" -maxdepth 5 -type f -name android.jar 2>/dev/null | head -1 || true)}"
 KEYSTORE="${KEYSTORE:-$HOME/apkbuild/debug.keystore}"
 
 [ -n "$BTDIR" ] || { echo "找不到 aapt2（可用 TOOLS 指定 build-tools 根目录）"; exit 1; }
@@ -23,7 +22,8 @@ KEYSTORE="${KEYSTORE:-$HOME/apkbuild/debug.keystore}"
 echo "java: $(java -version 2>&1 | head -1)"
 echo "build-tools: $BTDIR"
 
-rm -rf "$WORK"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/adbgw-build.XXXXXX")"
+trap 'find "$WORK" -depth -delete' EXIT
 mkdir -p "$WORK/classes" "$WORK/dex" "$WORK/res"
 cp -r "$APP_DIR/res/." "$WORK/res/"
 cp -r "$APP_DIR/icon_res/." "$WORK/res/"

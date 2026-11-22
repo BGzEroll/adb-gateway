@@ -1,51 +1,51 @@
-# docker —— 服务端
+# 网关
 
-常驻巡检服务：接收手机注册、把 adbd 切成固定端口 5555、对外提供 `/status`。
+网关运行在能访问手机且能接收本地 mDNS 的 Linux 主机。推荐 Google 官方 Platform-Tools。当前 Docker 镜像使用 Linux x86-64 的 Platform-Tools 37.0.3。
 
-## 运行
-
-```bash
-docker compose up -d --build
-docker compose logs -f
-curl -s http://127.0.0.1:8770/status | python3 -m json.tool
-```
-
-## 环境变量
-
-| 变量 | 默认 | 说明 |
+| 配置 | 默认值 | 用途 |
 |---|---|---|
-| `POLL` | `20` | 巡检间隔（秒） |
-| `FIXED` | `5555` | 目标固定端口 |
-| `STATUS_PORT` | `8770` | `/status` 监听端口 |
-| `PHONE` | 空 | 可选，预置手机地址；一般等待手机 `/register` 上报 |
+| `DEVICE_SERIAL` | 必填 | 手机通过 USB ADB 显示的序列号 |
+| `PHONE` | 空 | 已知手机 IPv4 地址，通常配合 DHCP 保留地址 |
+| `POLL` | `5` | 巡检间隔，单位为秒 |
+| `STATUS_PORT` | `8770` | HTTP 状态端口 |
+| `ADB_SERVER_PORT` | `5038` | 网关本地 ADB server 端口 |
 
-## 接口
+`GET /status` 的 `fixed_reachable` 表示最近一次巡检已通过手机的 `5555` 执行 ADB 命令并核对设备序列号。`last_action` 和 `detail` 提供恢复进度。
 
-- `POST /register` 手机上报：`{"ip":"...","tls_port":1234,"boot_id":"...","a11y":true,"pair_code":"...","pair_port":"..."}`
-- `GET /status` 返回当前状态、是否可达、最近动作
-- 手机侧接口：`GET /state`、`GET /repair`、`GET /pair`
+在固定端口可用时，网关也会检查手机恢复服务是否还在运行，必要时通过已授权的 ADB 会话重新启动它。
 
-## adbkey 说明
+## Linux 用户服务
 
-adb 鉴权是**服务端持有私钥、手机保存授权公钥**，所以私钥必须在服务端：
-
-- 容器首次运行会自动在卷 `keys` 中生成 `~/.android/adbkey`（无需手动准备）
-- 新 key 未被手机信任时，服务端会请求手机 `/pair` 获取配对码，执行 `adb pair` 完成授权
-- 若自动配对不可用，可退化为一次性把已授权电脑的 `adbkey{,.pub}` 放进卷：
+把官方 Platform-Tools 的 `adb` 放到 `~/.local/share/adbgw/platform-tools/adb`。从仓库根目录执行：
 
 ```bash
-docker compose down
-docker run --rm -v adbgw_keys:/keys -v ~/.android:/src alpine cp /src/adbkey /src/adbkey.pub /keys/
-docker compose up -d
+install -D -m 0644 docker/adbgw-server.py ~/.local/share/adbgw/adbgw-server.py
+install -D -m 0644 docker/adbgw.service ~/.config/systemd/user/adbgw.service
+mkdir -p ~/.config/adbgw
 ```
 
-## 排错
+在 `~/.config/adbgw/gateway.env` 写入实际序列号及手机地址：
+
+```ini
+DEVICE_SERIAL=<手机序列号>
+PHONE=<手机IP>
+```
 
 ```bash
-docker exec adbgw adb devices          # 是否 unauthorized
-docker logs --tail 50 adbgw
-curl -s http://127.0.0.1:8770/status
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable --now adbgw
+journalctl --user -u adbgw -f
 ```
 
-- `unauthorized`：key 未被手机信任，等待/触发配对
-- `poll fail`：手机 `/state` 不可达（可能未解锁、App 被强停）
+用户服务以当前用户运行，共用该用户 `~/.android` 下已授权的 ADB 密钥。
+
+## Docker Compose
+
+```bash
+cd docker
+DEVICE_SERIAL=<手机序列号> PHONE=<手机IP> docker compose up -d --build
+curl http://127.0.0.1:8770/status
+```
+
+可把环境变量写进 Compose 的 `.env` 以便后续重启。容器使用 Linux host 网络接收 mDNS。配置 `ADB_KEYS_DIR` 可以指定已授权密钥所在目录，默认为宿主用户的 `~/.android`。已有容器中的密钥可以导出到该目录继续使用。

@@ -1,0 +1,13 @@
+[Unit]
+Description=ADB Gateway
+After=network-online.target
+
+[Service]
+Environment=ADB=%h/.local/share/adbgw/platform-tools/adb
+EnvironmentFile=%h/.config/adbgw/gateway.env
+ExecStart=/usr/bin/python3 %h/.local/share/adbgw/adbgw-server.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

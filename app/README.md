@@ -1,55 +1,32 @@
-# app —— 手机端
+# 手机端
 
-Java 实现，无第三方依赖（不使用 Gradle，直接用 aapt2/d8 构建）。
-
-## 构建
+## 构建和安装
 
 ```bash
-./build.sh
+./app/build.sh
+adb -d install -r --no-incremental app/adbgw.apk
+adb -d shell pm grant com.dsh.adbkeep android.permission.WRITE_SECURE_SETTINGS
+adb -d shell am start -n com.dsh.adbkeep/.MainActivity
+adb -d shell getprop ro.serialno
 ```
 
-可选环境变量：`TOOLS`（build-tools 根目录）、`ANDROID_JAR`、`KEYSTORE`、`WORK`（中间产物目录）。
+构建需要 JDK 17、Android SDK build-tools、Android 平台的 `android.jar` 和调试签名。脚本使用 `TOOLS`、`ANDROID_JAR` 和 `KEYSTORE` 定位工具与密钥，默认路径见 [build.sh](build.sh)。
 
-产物：`app/adbgw.apk`。
+首次安装可能需要在手机上确认。后续保持 `com.dsh.adbkeep` 包名和同一签名，使用相同的覆盖更新命令。
 
-## 目录
+## 工作方式
 
+`BootReceiver` 在 Direct Boot、首次解锁完成和覆盖更新时启动 `GatewayService`。前台服务监听 Wi‑Fi，定期检查本机无线调试状态。Wi‑Fi 有 IPv4 地址且 `5555` 尚未监听时，服务可以重新开启原生无线调试，随后由网关把 `adbd` 切到固定端口。
+
+如果前台服务退出，网关可用现有的 ADB 会话重新启动它。手机还会向 Android 注册一个持久化的周期任务，为暂时没有 ADB 会话时补做无线调试检查。该任务的实际运行时间由系统调度。
+
+首次部署时，在开发电脑上确认 USB 调试授权，以及系统对当前 Wi‑Fi 的无线调试授权。网关应使用已授权的 ADB 密钥，也可以从网关用系统的配对码配对一次。
+
+## 真机诊断
+
+```bash
+adb -s <手机IP>:5555 logcat -d -s AdbGateway:I
+adb -s <手机IP>:5555 shell dumpsys activity services com.dsh.adbkeep
 ```
-AndroidManifest.xml   清单
-src/*.java            源码
-res/xml/a11y.xml      无障碍服务配置
-res/values/strings.xml
-icon_res/mipmap-*     各密度图标
-build.sh              构建脚本
-```
 
-## 组件
-
-| 类 | 职责 |
-|---|---|
-| `Core` | 设置读写、无障碍自愈、IP、mDNS 端口发现、TCP 探活 |
-| `Server` | 被动 HTTP：`/state`、`/repair`、`/pair` |
-| `GwA11yService` | 无障碍服务；打开「无线调试」开关、上报配对码、结束回桌面熄屏 |
-| `BootReceiver` | 开机写 `adb_wifi=1`、写回无障碍配置 |
-| `MainActivity` | 状态页 + 服务端地址配置 |
-| `Prefs` | 服务端地址（SharedPreferences，回退 `settings global adbgw_peer`） |
-| `L` | 轻量日志（logcat + 应用外部目录） |
-
-## 权限
-
-- `WRITE_SECURE_SETTINGS`（需 `pm grant`）：写 `adb_wifi_enabled`、写回无障碍
-- `INTERNET`、`RECEIVE_BOOT_COMPLETED`
-- 无障碍服务（`BIND_ACCESSIBILITY_SERVICE`）
-
-## 关键流程
-
-1. 开机 → `BootReceiver` 写设置 + 自愈无障碍
-2. 解锁/系统事件 → `GwA11yService` 健康检查（**纯接口**：settings / TCP / mDNS）
-3. 不健康 → 导航：回桌面 → 开发者选项 → 无线调试 → 点开关（开关本身不可点，需点其可点祖先）
-4. 结束 → 回桌面 + 熄屏（`GLOBAL_ACTION_LOCK_SCREEN`）
-5. 收到服务端 `/pair` → 打开「使用配对码配对设备」读码上报
-
-## 限制
-
-- 「无线调试」控件与手势注入受 ColorOS 限制，必须开启「禁用系统优化」
-- 配对流程要求设备已解锁（锁屏时返回 `locked`）
+日志记录启动来源、首次解锁状态和无线调试设置的写入结果。

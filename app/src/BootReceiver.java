@@ -6,11 +6,7 @@ import android.content.Intent;
 
 public class BootReceiver extends BroadcastReceiver {
     @Override
-    public void onReceive(Context c, Intent i) {
-        String action = i == null ? "null" : i.getAction();
-        L.d(c, action);
-        Context ctx = c.getApplicationContext();
-        Core.writeAdbWifi(ctx, 1);
-        Core.selfHeal(ctx);
+    public void onReceive(Context context, Intent intent) {
+        GatewayService.start(context, intent.getAction());
     }
 }
