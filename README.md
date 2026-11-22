@@ -1,27 +1,28 @@
-# ADB 网关
+# adb-gateway
 
-让闲置安卓手机在 Wi‑Fi 上长期提供 `手机 IP:5555`，供其他 ADB 客户端和 Agent 直接使用。
+在可信局域网内共享 Android 11+ 的原生无线 ADB。手机端使用 Java 和 Android 系统 API，无需 Root 或无障碍权限。
 
-- 手机 App 在开机和 Wi‑Fi 恢复后通过系统设置开启原生无线调试。它使用 `WRITE_SECURE_SETTINGS`，无需无障碍。
-- 常开的 Linux 网关通过 mDNS 发现手机的动态无线调试端口，再用 `adb tcpip 5555` 恢复手机上的固定端口。已经能访问固定端口时，网关不会重启 `adbd`。
-- USB 用于首次安装、授予权限和授权网关的 ADB 密钥。正常恢复通过 Wi‑Fi 完成。
-
-## 部署
-
-1. 构建并配置[手机 App](app/README.md)。
-2. 在同一个局域网启动[网关](docker/README.md)。可选择 Linux 用户服务或 Docker Compose。
-3. 给手机在路由器上保留一个 DHCP 地址，其他客户端就可以一直用同一个 IP。
-
-```bash
-adb connect <手机IP>:5555
-adb -s <手机IP>:5555 shell getprop ro.product.model
-curl http://<网关IP>:8770/status
+```text
+Agent / ADB 客户端 ── TCP 5038 ──→ Docker ADB Server ── TLS / 动态端口 ──→ Android 手机
 ```
 
-每个使用独立 ADB 密钥的客户端首次连接时，需要在手机上确认调试授权。网关的 ADB 密钥应保留，以便它在手机重启后继续连接。
+手机助手在开机和 Wi-Fi 恢复后开启无线调试。容器中的官方 ADB Server 负责 mDNS 发现、配对和连接。每台手机和网关配对一次，Agent 和其他客户端共用网关的配对身份。
 
-## 验收
+## 部署和使用
 
-解除开发机的 USB 挂载后，分别验证正常锁屏、Wi‑Fi 断开重连、网关进程重启和手机重启。每轮都用独立的 ADB 客户端连接 `手机 IP:5555`，执行一条 shell 命令。冷启动时分别记录首次解锁前和解锁后的结果。
+1. [构建并安装手机助手](app/README.md)，通过 ADB 授予 `WRITE_SECURE_SETTINGS`。
+2. 在与手机处于同一局域网的 Linux x86-64 主机上[准备镜像并启动 Compose](docker/README.md#构建或发布镜像)。
+3. [首次配对并验证客户端连接](docker/README.md#首次配对)。
 
-恢复依赖手机重新加入 Wi‑Fi，以及网关能发现或访问手机。换到未授权的 Wi‑Fi、撤销调试授权、强行停止 App 且 ADB 已断开时，需要在手机上处理。冷启动时手机 App 支持 Direct Boot，首次解锁前的可用性以机型和系统实测为准。
+## 访问范围
+
+**共享端口只应部署在可信网络，禁止直接暴露到公网。** 手机与网关之间使用原生 TLS。客户端到网关的 ADB Server 协议没有独立鉴权或传输加密。通过宿主机防火墙、Tailscale ACL 或 SSH 隧道限制来源。
+
+## 真机验收
+
+1. 和容器配对后，保持 USB 断开，用远程客户端的 `devices -l` 确认状态为 `device`，再执行 `shell getprop ro.product.model`。
+2. 断开手机 Wi-Fi，再接入已授权的网络。检查设备能否重新出现并执行命令。
+3. 重启手机，分别记录首次解锁前和解锁后的结果。Direct Boot 能提前启动助手，实际无线调试可用时间取决于 ROM、锁屏和 Wi-Fi 状态。
+4. 保留数据卷并重建容器，再检查设备能否自动恢复连接。配对身份保存在该卷。
+
+已在 PYE110（Android 16 / ColorOS 16.1）验证配对、Wi-Fi 重连、手机重启和容器重建。其他 ROM 和设置开机 PIN 后的首次解锁前连接需另行验证。 [发现与重连排查](docker/README.md#发现与重连)

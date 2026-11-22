@@ -1,51 +1,75 @@
-# 网关
+# Docker ADB Server
 
-网关运行在能访问手机且能接收本地 mDNS 的 Linux 主机。推荐 Google 官方 Platform-Tools。当前 Docker 镜像使用 Linux x86-64 的 Platform-Tools 37.0.3。
+镜像使用 Google 官方 Platform-Tools 36.0.2，支持 Linux x86-64。容器通过 host 网络进行 mDNS 发现，镜像构建和 Compose 部署分别执行。
 
-| 配置 | 默认值 | 用途 |
-|---|---|---|
-| `DEVICE_SERIAL` | 必填 | 手机通过 USB ADB 显示的序列号 |
-| `PHONE` | 空 | 已知手机 IPv4 地址，通常配合 DHCP 保留地址 |
-| `POLL` | `5` | 巡检间隔，单位为秒 |
-| `STATUS_PORT` | `8770` | HTTP 状态端口 |
-| `ADB_SERVER_PORT` | `5038` | 网关本地 ADB server 端口 |
+## 构建或发布镜像
 
-`GET /status` 的 `fixed_reachable` 表示最近一次巡检已通过手机的 `5555` 执行 ADB 命令并核对设备序列号。`last_action` 和 `detail` 提供恢复进度。
-
-在固定端口可用时，网关也会检查手机恢复服务是否还在运行，必要时通过已授权的 ADB 会话重新启动它。
-
-## Linux 用户服务
-
-把官方 Platform-Tools 的 `adb` 放到 `~/.local/share/adbgw/platform-tools/adb`。从仓库根目录执行：
+在仓库根目录构建本地镜像：
 
 ```bash
-install -D -m 0644 docker/adbgw-server.py ~/.local/share/adbgw/adbgw-server.py
-install -D -m 0644 docker/adbgw.service ~/.config/systemd/user/adbgw.service
-mkdir -p ~/.config/adbgw
+docker build -t adb-gateway:latest ./docker
 ```
 
-在 `~/.config/adbgw/gateway.env` 写入实际序列号及手机地址：
-
-```ini
-DEVICE_SERIAL=<手机序列号>
-PHONE=<手机IP>
-```
+如果需要发布到 Docker Hub，替换下面的示例命名空间，再构建并推送：
 
 ```bash
-loginctl enable-linger "$USER"
-systemctl --user daemon-reload
-systemctl --user enable --now adbgw
-journalctl --user -u adbgw -f
+docker build -t YOUR_NAMESPACE/adb-gateway:latest ./docker
+docker push YOUR_NAMESPACE/adb-gateway:latest
 ```
 
-用户服务以当前用户运行，共用该用户 `~/.android` 下已授权的 ADB 密钥。
+部署已发布镜像时，把 [Compose](docker-compose.yml) 中的 `image` 改成发布时使用的完整标签。
 
-## Docker Compose
+## 启动和更新
+
+启动前按[访问范围](../README.md#访问范围)限制共享端口。Compose 使用已构建或可从仓库拉取的镜像。
 
 ```bash
 cd docker
-DEVICE_SERIAL=<手机序列号> PHONE=<手机IP> docker compose up -d --build
-curl http://127.0.0.1:8770/status
+docker compose up -d
 ```
 
-可把环境变量写进 Compose 的 `.env` 以便后续重启。容器使用 Linux host 网络接收 mDNS。配置 `ADB_KEYS_DIR` 可以指定已授权密钥所在目录，默认为宿主用户的 `~/.android`。已有容器中的密钥可以导出到该目录继续使用。
+从 Docker Hub 更新时，先运行 `docker compose pull`，再运行 `docker compose up -d`。
+
+`adb-data` 命名卷挂载到容器的 `/root/.android`。ADB 首次启动生成密钥，配对记录也保存在该卷。更新镜像或重建容器时保留此卷，避免使用 `docker compose down -v`。
+
+## 端口配置
+
+唯一的可选运行参数是 `ADB_SERVER_PORT`，默认 **5038**，由镜像提供。需要修改时在 Compose 的服务下添加：
+
+```yaml
+environment:
+  ADB_SERVER_PORT: "5040"
+```
+
+容器监听端口就是宿主机的实际端口。改端口后，同步更新防火墙规则和客户端的 `-P` 或 `ADB_SERVER_SOCKET`。
+
+## 首次配对
+
+在手机的系统无线调试页面选择「使用配对码配对设备」。保持页面打开，把示例地址替换为页面显示的配对地址与端口。
+
+```bash
+PAIR_ADDRESS=192.0.2.20:37000
+docker compose exec adb-gateway adb -P 5038 pair "$PAIR_ADDRESS"
+docker compose exec adb-gateway adb -P 5038 devices -l
+```
+
+配对端口仅用于首次配对。后续 ADB Server 使用 mDNS 发现已配对手机的连接端口。
+
+## 客户端连接
+
+将下面的地址替换为网关主机的地址。可在命令中显式指定网关，也可以为当前终端设置 `ADB_SERVER_SOCKET`。
+
+```bash
+GATEWAY_IP=192.0.2.10
+adb -H "$GATEWAY_IP" -P 5038 devices -l
+export ADB_SERVER_SOCKET="tcp:$GATEWAY_IP:5038"
+adb devices -l
+```
+
+通过共享网关可照常使用 `adb shell` 和 `adb install`。有多台设备时，用 `-s` 加上 `devices -l` 列出的设备标识选择目标。
+
+## 发现与重连
+
+设备未出现时，运行 `docker compose exec adb-gateway adb -P 5038 mdns services`，检查网关能否收到手机发出的 mDNS 公告。
+
+真机对比中，37.0.3 曾在 Wi-Fi 恢复后发现新端口却漏连，因此固定使用已验证断网重连的 36.0.2。36.0.2 也有一次在手机重启后漏连。为覆盖这一情况，容器健康检查约每 15 秒读取官方 ADB 的发现结果，对已配对且未在线的设备补一次 `adb connect`。

@@ -1,14 +1,11 @@
 services:
-  adbgw:
-    build: .
-    image: adbgw/server:latest
+  adb-gateway:
+    image: adb-gateway:latest
+    container_name: adb-gateway
     restart: unless-stopped
     network_mode: host
-    environment:
-      DEVICE_SERIAL: "${DEVICE_SERIAL:?Set the USB serial of the target phone}"
-      PHONE: "${PHONE:-}"
-      POLL: "${POLL:-5}"
-      ADB_SERVER_PORT: "${ADB_SERVER_PORT:-5038}"
-      STATUS_PORT: "${STATUS_PORT:-8770}"
     volumes:
-      - "${ADB_KEYS_DIR:-${HOME}/.android}:/root/.android"
+      - adb-data:/root/.android
+
+volumes:
+  adb-data:

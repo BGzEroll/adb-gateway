@@ -9,8 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
-import android.net.LinkProperties;
 import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkRequest;
@@ -21,17 +21,15 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.util.Log;
 
-import java.io.IOException;
 import java.net.Inet4Address;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 
 public final class GatewayService extends Service {
     static final String TAG = "AdbGateway";
     static final String SETTING = "adb_wifi_enabled";
     static final String WRITE_SETTINGS = "android.permission.WRITE_SECURE_SETTINGS";
+    static final NetworkRequest WIFI_REQUEST = new NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build();
     private static final String CHANNEL = "adb_gateway";
-    private static final int FIXED_PORT = 5555;
     private static final long CHECK_INTERVAL_MS = 15000;
 
     private HandlerThread thread;
@@ -40,11 +38,10 @@ public final class GatewayService extends Service {
     private final Runnable check = new Runnable() {
         @Override
         public void run() {
-            maintain();
+            worker.postDelayed(this, CHECK_INTERVAL_MS);
+            restoreWirelessAdb(GatewayService.this);
         }
     };
-    private final NetworkRequest wifiRequest = new NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build();
     private final ConnectivityManager.NetworkCallback networkCallback =
             new ConnectivityManager.NetworkCallback() {
                 @Override
@@ -87,7 +84,7 @@ public final class GatewayService extends Service {
         thread.start();
         worker = new Handler(thread.getLooper());
         connectivity = getSystemService(ConnectivityManager.class);
-        connectivity.registerNetworkCallback(wifiRequest, networkCallback, worker);
+        connectivity.registerNetworkCallback(WIFI_REQUEST, networkCallback, worker);
         RecoveryJob.schedule(this);
     }
 
@@ -104,23 +101,17 @@ public final class GatewayService extends Service {
         worker.post(check);
     }
 
-    private void maintain() {
-        worker.postDelayed(check, CHECK_INTERVAL_MS);
-        restoreWirelessAdb(this);
-    }
-
     static void restoreWirelessAdb(Context context) {
         if (context.checkSelfPermission(WRITE_SETTINGS) != PackageManager.PERMISSION_GRANTED
                 || Settings.Global.getInt(context.getContentResolver(), SETTING, 0) == 1
-                || !hasWifiAddress(context.getSystemService(ConnectivityManager.class))
-                || fixedPortListening()) {
+                || !hasWifiAddress(context.getSystemService(ConnectivityManager.class))) {
             return;
         }
         boolean written = Settings.Global.putInt(context.getContentResolver(), SETTING, 1);
         Log.i(TAG, "开启无线调试=" + written);
     }
 
-    private static boolean hasWifiAddress(ConnectivityManager connectivity) {
+    static boolean hasWifiAddress(ConnectivityManager connectivity) {
         for (Network network : connectivity.getAllNetworks()) {
             NetworkCapabilities capabilities = connectivity.getNetworkCapabilities(network);
             if (capabilities == null || !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
@@ -136,15 +127,6 @@ public final class GatewayService extends Service {
             }
         }
         return false;
-    }
-
-    private static boolean fixedPortListening() {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", FIXED_PORT), 500);
-            return true;
-        } catch (IOException e) {
-            return false;
-        }
     }
 
     @Override

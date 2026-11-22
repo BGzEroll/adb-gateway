@@ -1,32 +1,25 @@
-# 手机端
+# Android 手机助手
+
+支持 Android 11（API 30）以上，目标 SDK 为 34。App 无第三方库，使用 Android 的 `connectedDevice` 前台服务及对应的清单权限。
 
 ## 构建和安装
+
+从仓库根目录执行。
 
 ```bash
 ./app/build.sh
 adb -d install -r --no-incremental app/adbgw.apk
 adb -d shell pm grant com.dsh.adbkeep android.permission.WRITE_SECURE_SETTINGS
 adb -d shell am start -n com.dsh.adbkeep/.MainActivity
-adb -d shell getprop ro.serialno
 ```
 
-构建需要 JDK 17、Android SDK build-tools、Android 平台的 `android.jar` 和调试签名。脚本使用 `TOOLS`、`ANDROID_JAR` 和 `KEYSTORE` 定位工具与密钥，默认路径见 [build.sh](build.sh)。
-
-首次安装可能需要在手机上确认。后续保持 `com.dsh.adbkeep` 包名和同一签名，使用相同的覆盖更新命令。
+构建依赖 JDK 17、Android build-tools、`android.jar` 和调试签名。脚本可通过 `TOOLS`、`ANDROID_JAR` 和 `KEYSTORE` 指定路径，产物为 `app/adbgw.apk`。首次安装可能需要在手机上确认，覆盖更新沿用包名和签名。
 
 ## 工作方式
 
-`BootReceiver` 在 Direct Boot、首次解锁完成和覆盖更新时启动 `GatewayService`。前台服务监听 Wi‑Fi，定期检查本机无线调试状态。Wi‑Fi 有 IPv4 地址且 `5555` 尚未监听时，服务可以重新开启原生无线调试，随后由网关把 `adbd` 切到固定端口。
+- `BootReceiver` 接收 `LOCKED_BOOT_COMPLETED`、`BOOT_COMPLETED` 和 `MY_PACKAGE_REPLACED`，启动 `GatewayService`。
+- 前台服务监听 Wi-Fi，并每 15 秒检查一次。Wi-Fi 有 IPv4 地址且 App 有设置权限时，仅在无线调试未开启的情况下写入 `adb_wifi_enabled=1`。
+- `RecoveryJob` 为前台服务异常退出准备了持久化的周期检查，周期为 15 分钟，实际执行时间由 Android 调度。
+- 状态页显示设置权限、Wi-Fi IPv4 状态和无线调试设置状态。系统配对由手机的「无线调试」页面完成。
 
-如果前台服务退出，网关可用现有的 ADB 会话重新启动它。手机还会向 Android 注册一个持久化的周期任务，为暂时没有 ADB 会话时补做无线调试检查。该任务的实际运行时间由系统调度。
-
-首次部署时，在开发电脑上确认 USB 调试授权，以及系统对当前 Wi‑Fi 的无线调试授权。网关应使用已授权的 ADB 密钥，也可以从网关用系统的配对码配对一次。
-
-## 真机诊断
-
-```bash
-adb -s <手机IP>:5555 logcat -d -s AdbGateway:I
-adb -s <手机IP>:5555 shell dumpsys activity services com.dsh.adbkeep
-```
-
-日志记录启动来源、首次解锁状态和无线调试设置的写入结果。
+通过已连通的 ADB 执行 `adb logcat -d -s AdbGateway:I`，可查看启动来源和设置写入结果。强行停止 App 后，重新打开 App 可恢复后台检查。
