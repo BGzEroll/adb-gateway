@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.database.ContentObserver;
 import android.net.ConnectivityManager;
 import android.net.LinkAddress;
 import android.net.LinkProperties;
@@ -17,6 +18,7 @@ import android.net.NetworkRequest;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.SystemClock;
 import android.os.UserManager;
 import android.provider.Settings;
 import android.util.Log;
@@ -35,11 +37,16 @@ public final class GatewayService extends Service {
     private HandlerThread thread;
     private Handler worker;
     private ConnectivityManager connectivity;
+    private ContentObserver adbSettingObserver;
+    private long nextEnableAttempt;
     private final Runnable check = new Runnable() {
         @Override
         public void run() {
+            long now = SystemClock.elapsedRealtime();
+            if (now >= nextEnableAttempt && restoreWirelessAdb(GatewayService.this)) {
+                nextEnableAttempt = now + CHECK_INTERVAL_MS;
+            }
             worker.postDelayed(this, CHECK_INTERVAL_MS);
-            restoreWirelessAdb(GatewayService.this);
         }
     };
     private final ConnectivityManager.NetworkCallback networkCallback =
@@ -84,6 +91,14 @@ public final class GatewayService extends Service {
         thread.start();
         worker = new Handler(thread.getLooper());
         connectivity = getSystemService(ConnectivityManager.class);
+        adbSettingObserver = new ContentObserver(worker) {
+            @Override
+            public void onChange(boolean selfChange) {
+                scheduleCheck();
+            }
+        };
+        getContentResolver().registerContentObserver(
+                Settings.Global.getUriFor(SETTING), false, adbSettingObserver);
         connectivity.registerNetworkCallback(WIFI_REQUEST, networkCallback, worker);
         RecoveryJob.schedule(this);
     }
@@ -101,14 +116,15 @@ public final class GatewayService extends Service {
         worker.post(check);
     }
 
-    static void restoreWirelessAdb(Context context) {
+    static boolean restoreWirelessAdb(Context context) {
         if (context.checkSelfPermission(WRITE_SETTINGS) != PackageManager.PERMISSION_GRANTED
                 || Settings.Global.getInt(context.getContentResolver(), SETTING, 0) == 1
                 || !hasWifiAddress(context.getSystemService(ConnectivityManager.class))) {
-            return;
+            return false;
         }
         boolean written = Settings.Global.putInt(context.getContentResolver(), SETTING, 1);
         Log.i(TAG, "开启无线调试=" + written);
+        return true;
     }
 
     static boolean hasWifiAddress(ConnectivityManager connectivity) {
@@ -136,6 +152,7 @@ public final class GatewayService extends Service {
 
     @Override
     public void onDestroy() {
+        getContentResolver().unregisterContentObserver(adbSettingObserver);
         connectivity.unregisterNetworkCallback(networkCallback);
         worker.removeCallbacksAndMessages(null);
         thread.quitSafely();
